@@ -23,6 +23,13 @@ SOFTWARE.
 -------------------------------------------------------------------------------
 EXCEPTION / 例外規定
 
+The music track embedded in this software (BGM: 「白い線の上」) is NOT covered by
+the MIT License above and is used with the rights holder's permission. It may
+not be extracted or reused separately.
+
+本ソフトウェアに埋め込まれた楽曲（BGM「白い線の上」）は上記MITライセンスの
+対象外であり、権利者の許諾のもとで使用しています。抽出・再利用はできません。
+
 The character artwork embedded in this software — フテ猫 (Futeneko),
 クロネコさん (Kuronekosan) and チャッピーちゃん (Chappy-chan), including all
 derived sprite images encoded within index.html — is NOT covered by the MIT
