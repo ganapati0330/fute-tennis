@@ -1078,7 +1078,7 @@ const PAD_RX = 104, PAD_RY = 80;          // racket reach around the player
 const HANDI_REACH = 1.55, HANDI_SPEED = 1.12;
 // a ball dropping out of the sky can be put away, if you time it
 const SMASH_MIN = 175, SMASH_MAX = 470, SMASH_IDEAL = 330, SMASH_WIN = 150;
-const MOVE_SPD = 1520;                    // how fast a player runs
+const MOVE_SPD = 1180;                    // how fast a player runs
 const SWING_DUR = 0.50;
 const DRAG_GAIN = 1.35;
 // singles court lines – a ball landing outside these is OUT
@@ -1086,9 +1086,14 @@ const LINE_L = 120, LINE_R = W - 120, LINE_T = 270, LINE_B = H - 270;
 const GRAV = 2400;          // px/s^2 acting on the ball's height
 const REACH = 330;          // how high a player can reach
 const BOUNCE = 0.62, ROLL = 0.93;
-const AIM_SIDE = 240;       // how far a shot on the run can stray sideways (px)
-const AIM_DEPTH = 120;      // ...and long or short
-const STEADY_LO = 250, STEADY_HI = 1400;
+const AIM_SIDE = 150;       // how far a shot on the run can stray sideways (px)
+const AIM_DEPTH = 95;       // ...and long or short
+/* Balance is judged against each player's *own* top speed, not an absolute one.
+   Measuring it in px/s quietly punished the human side: a person runs at
+   MOVE_SPD while the CPU only manages CPU_SPD, so the CPU was always "set"
+   and the player was always off balance, and almost every ball hit out came
+   off the player's racket. */
+const STEADY_LO = 0.34, STEADY_HI = 1.0;
 const MAX_BEND = 275;       // how far a full curve pulls the ball sideways (px)
 const SERVE_BEND = 200;
 const FLICK_MIN = 850;      // how sharp a flick has to be to count as one
@@ -1096,8 +1101,8 @@ const TOP_GRAV = 0.85;      // how much extra gravity full topspin adds
 const SWIPE_FWD_DEAD = 350, SWIPE_SIDE_DEAD = 400;
 const NAMES = ['フテ猫', 'クロネコ'];
 const COLS = ['#f08a24', '#3a3a3a'];
-const CPU_SPD = [430, 640, 880];
-const CPU_ERR = [150, 78, 26];
+const CPU_SPD = [400, 520, 760];
+const CPU_ERR = [170, 132, 48];
 const CPU_LAG = [0.34, 0.19, 0.08];
 const SERVE_Y0 = LINE_B + 26, SERVE_Y1 = LINE_T - 26;   // you must serve from behind your baseline
 const SERVE_LINE = 360;      // the service line, as drawn on the court
@@ -1131,7 +1136,7 @@ const G = {
   ball: { x: W / 2, y: NET_Y, z: 130, vx: 0, vy: 0, vz: 0, spin: 0, grav: GRAV },
   flick: [{ x: 0, y: 0 }, { x: 0, y: 0 }], serveFlick: { x: 0, y: 0 }, spinName: '',
   bounces: 0, judging: false, lastHit: 0, hitDir: -1, serveBall: false,
-  tossX: 0, tossY: 0, tossPX: 0,
+  tossX: 0, tossY: 0, tossPX: 0, tossLatch: false,
   shotKind: 'flat',
   serveNum: 1, faultReplay: false, cpuHitZ: 0, serveQ: 0,
   aimNoise: 1, steady: 1, dropArm: [0, 0], aces: [0, 0], handi: 0, deciderStart: -1,
@@ -1225,9 +1230,11 @@ function placeServe(second) {
   const p = G.p[s], r = G.p[1 - s];
   p.x = p.tx = spot.x; p.y = p.ty = spot.y;
   p.vx = p.vy = p.svx = p.svy = 0;
-  // the receiver waits in the court the serve is coming to
+  // the receiver waits behind their own baseline, in the court the serve is
+  // coming to
   r.x = r.tx = W / 2 - side * 150;
-  r.y = r.ty = (s === 0 ? Y_TOP : Y_BOT);
+  const rb = recvBounds(1 - s);
+  r.y = r.ty = (s === 0 ? rb[1] - 22 : rb[0] + 22);
   r.vx = r.vy = r.svx = r.svy = 0;
   b.x = p.x + TOSS_DX;
   b.y = p.y + (s === 0 ? -52 : 52);
@@ -1380,10 +1387,15 @@ function spinName(i, sp) {
    swinging from a standstill is the accurate shot; hitting on the run is what
    lets you drive or lob, but the aim wanders.  It is a trade, not a guarantee —
    a still player can still miss by catching the ball off the frame. */
+function topSpeed(i) {
+  const base = (i === 1 && G.mode === 'cpu') ? CPU_SPD[G.diff] : MOVE_SPD;
+  return base * handiSpeed(i);
+}
 function aimSteady(i) {
   const p = G.p[i];
   const spd = Math.sqrt(p.svx * p.svx + p.svy * p.svy);
-  return clamp01(1 - (spd - STEADY_LO) / (STEADY_HI - STEADY_LO));
+  const r = spd / Math.max(1, topSpeed(i));
+  return clamp01(1 - (r - STEADY_LO) / (STEADY_HI - STEADY_LO));
 }
 
 /* ---- the shot is decided by how the player is moving at the moment of contact ---- */
@@ -1663,7 +1675,7 @@ function hitPaddle(i) {
   const q = shotFrom(i);
   G.rally++;
   if (G.rally > G.best) G.best = G.rally;
-  const base = Math.min(1, 0.32 + G.rally * 0.055);
+  const base = Math.min(1.25, 0.32 + G.rally * 0.055);
   const pw = Math.max(0.10, Math.min(1.25, base * q.pm + (volley ? 0.12 : 0)));
   const dir = i === 0 ? -1 : 1;
   const off = Math.max(-1, Math.min(1, (b.x - p.x) / (PAD_RX + BALL_R)));
@@ -1687,6 +1699,7 @@ function hitPaddle(i) {
   const sp = spinFromFlick(i);
   b.grav = GRAV * (1 + TOP_GRAV * sp.top);
   if (sp.top > 0) { depth = Math.min(0.95, depth + 0.05 * sp.top); T *= 1 - 0.10 * sp.top; }
+  T *= 1 - 0.28 * Math.min(1, G.rally / 22);   // the exchange speeds up as it goes on
   T = Math.max(0.26, Math.min(1.50, T));
   b.z = Math.max(b.z, 34);
   b.spin = spinAccel(sp.lat, T, MAX_BEND);
@@ -1703,18 +1716,33 @@ function hitPaddle(i) {
 
   let landY = i === 0 ? NET_Y - (100 + depth * span) : NET_Y + (100 + depth * span);
   landY = i === 0 ? Math.max(LINE_T + 55, landY) : Math.min(LINE_B - 55, landY);
-  let landX = b.x + off * (740 - 250 * steady);
-
-  // a settled player also allows for the curve, keeping it inside the tramlines
-  const bend = MAX_BEND * sp.lat;
-  const safe = Math.max(LINE_L + 60, Math.min(LINE_R - 60, landX + bend));
-  landX += (safe - (landX + bend)) * steady * 0.55;
+  /* How centred the contact was matters more than how fast you were running.
+     Meet the ball in the middle of the strings and it stays inside the lines
+     even at a dead sprint; catch it off the frame and it sprays. */
+  const centred = 1 - Math.min(1, Math.abs(off) / 0.62);
+  /* The safety net follows the *contact*, not the feet: a set player who still
+     catches the ball off the frame gets almost no help, so "meet it in the
+     middle" stays the lesson. Being set only adds a small extra margin. */
+  const guide = Math.min(1, centred * 0.85 + steady * 0.28);
+  let landX = b.x + off * (620 - 200 * steady);
 
   // even a set player never has perfect control – catching it off the frame hurts
-  let noise = (0.12 + 0.88 * (1 - steady)) * (G.aimNoise === undefined ? 1 : G.aimNoise);
-  if (G.mode === 'cpu' && i === 1) noise *= 1 - 0.25 * G.diff;
-  const aimX = landX + (Math.random() * 2 - 1) * AIM_SIDE * noise;
+  /* A long exchange frays both players.  The multiplier alone was not enough:
+     two well-set players never left their feet, so their base accuracy never
+     degraded and points could run to hundreds of shots.  The additive term
+     bites only past ~18 strokes and guarantees the rally resolves. */
+  const fatigue = 1 + Math.min(2.5, G.rally * 0.05);
+  const drift = Math.max(0, G.rally - 14) * 0.040;
+  let noise = ((0.12 + 0.88 * (1 - steady)) * fatigue + drift) *
+              (G.aimNoise === undefined ? 1 : G.aimNoise);
+  if (G.mode === 'cpu' && i === 1) noise *= 1 - 0.14 * G.diff;
+  let aimX = landX + (Math.random() * 2 - 1) * AIM_SIDE * noise;
   const aimY = landY + (Math.random() * 2 - 1) * AIM_DEPTH * noise;
+
+  // pull the whole thing back inside the tramlines, allowing for the curve
+  const bend = MAX_BEND * sp.lat;
+  const safe = Math.max(LINE_L + 60, Math.min(LINE_R - 60, aimX + bend));
+  aimX += (safe - (aimX + bend)) * guide;
 
   G.shotKind = kind;
   G.spinName = spinName(i, sp);
@@ -1851,21 +1879,31 @@ function spark(x, y, dir) {
   }
 }
 
-function step(dt) {
-  for (let i = G.fx.length - 1; i >= 0; i--) {
-    const f = G.fx[i];
-    f.life -= dt; f.x += f.vx * dt; f.y += f.vy * dt; f.vy -= UP() * 900 * dt;
-    if (f.life <= 0) G.fx.splice(i, 1);
-  }
-  if (G.msgT > 0) G.msgT -= dt;
+/* Whose position this device is entitled to move.  The host simulates both
+   characters; the guest only ever moves its own, because the host's comes in
+   over the wire.  Touching the other one here makes it march off between
+   packets and snap back on the next update — which is exactly what a flicker
+   looks like. */
+function ownsPaddle(i) {
+  if (G.mode !== 'net') return true;
+  return G.authority || i === G.me;
+}
 
-  // paddles
-  // while serving you must stay behind your own baseline, on the correct half
-  if (G.phase === 'serve' || G.phase === 'toss') {
-    const s = G.server, sp = G.p[s], side = serveSide();
+/* Serving stance: the server stands behind their own baseline on the correct
+   half, and the receiver has to stay behind theirs until the ball is struck. */
+function serveStance() {
+  const s = G.server, side = serveSide();
+  if (ownsPaddle(s)) {
+    const sp = G.p[s];
     sp.ty = s === 0 ? SERVE_Y0 : SERVE_Y1;
-    if (G.phase === 'toss') sp.tx = G.tossPX;   // stand still through the toss
-    else {
+    if (G.phase === 'toss') {
+      // latch where the server was standing when the ball went up.  Both
+      // devices latch for themselves, so the guest no longer falls back on an
+      // unset value and walk its own player to the edge of the court.
+      if (!G.tossLatch) { G.tossPX = sp.x; G.tossLatch = true; }
+      sp.tx = G.tossPX;
+    } else {
+      G.tossLatch = false;
       // you may slide along your own half of the baseline, but not across the
       // centre mark and not in front of the line
       const lo = side > 0 ? W / 2 + SERVE_OFF_MIN : W / 2 - SERVE_OFF_MAX;
@@ -1877,6 +1915,29 @@ function step(dt) {
       }
     }
   }
+  const r = 1 - s;
+  if (ownsPaddle(r)) {
+    const rp = G.p[r];
+    const b = recvBounds(r);
+    rp.ty = Math.max(b[0], Math.min(b[1], rp.ty));
+  }
+}
+// where the receiver is allowed to wait: behind their own baseline
+function recvBounds(r) {
+  return r === 0 ? [LINE_B, Y0_MAX] : [Y1_MIN, LINE_T];
+}
+
+function step(dt) {
+  for (let i = G.fx.length - 1; i >= 0; i--) {
+    const f = G.fx[i];
+    f.life -= dt; f.x += f.vx * dt; f.y += f.vy * dt; f.vy -= UP() * 900 * dt;
+    if (f.life <= 0) G.fx.splice(i, 1);
+  }
+  if (G.msgT > 0) G.msgT -= dt;
+
+  // paddles
+  if (G.phase === 'serve' || G.phase === 'toss') serveStance();
+  else G.tossLatch = false;
   if (G.mode === 'cpu') cpuThink(dt);
   movePaddle(0, dt, MOVE_SPD * handiSpeed(0));
   movePaddle(1, dt, (G.mode === 'cpu' ? CPU_SPD[G.diff] : MOVE_SPD) * handiSpeed(1));
@@ -2053,6 +2114,7 @@ function onNetMessage(raw) {
     b.vx = a[3]; b.vy = a[4]; b.vz = a[5]; b.spin = a[6];
     G.p[0].x = a[7]; G.p[0].tx = a[7];
     G.p[0].y = a[8]; G.p[0].ty = a[8];
+    G.p[0].vx = 0; G.p[0].vy = 0;
     G.pts[0] = a[9]; G.pts[1] = a[10]; G.games[0] = a[11]; G.games[1] = a[12];
     const ph = PHN[a[13]] || 'rally';
     if (ph === 'over' && G.phase !== 'over') { G.winner = -2; SND.bgm(true, 'menu'); }
@@ -2483,7 +2545,20 @@ const STRIP_OFF = 100;
 function serveStripY() {
   return (G.server === 0 ? LINE_B + STRIP_OFF : LINE_T - STRIP_OFF);
 }
+function drawRecvLine() {
+  if (G.phase !== 'serve' && G.phase !== 'toss') return;
+  const r = 1 - G.server;
+  const y = r === 0 ? LINE_B + 20 : LINE_T - 20;
+  ctx.save();
+  ctx.setLineDash([18, 14]);
+  ctx.strokeStyle = 'rgba(255,255,255,.35)';
+  ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.moveTo(LINE_L - 86, y); ctx.lineTo(W - (LINE_L - 86), y); ctx.stroke();
+  ctx.restore();
+}
+
 function drawServeStrip() {          // court layer: sits under the players
+  drawRecvLine();
   if (G.phase !== 'serve') return;
   const side = serveSide(), y = serveStripY();
   const x0 = side > 0 ? W / 2 + SERVE_OFF_MIN : W / 2 - SERVE_OFF_MAX;
@@ -3346,6 +3421,7 @@ window.__T = { G, step, SDPC, PEER, startGame, resetMatch, doServe, handleCode, 
   VOICE, SND, scoreLine, shotFrom, spokenScore, canReach, predictLanding, startSwing,
   inCourt, inServiceBox, serveSide, serveSpot, serveBox, serveTarget, strikeServe, resultHit,
   placeServe, canReach, gameState, serveTap, serveAction, serveQuality, stopGame,
+  serveStance, recvBounds, ownsPaddle,
   startSwing, tossProgress, beginServeSwing, charFrame, charPose, charView, swingHand,
   POSE_SCALE,
   UP, FLIP, airY, boardFade, SHOTS, shotKind, cpuShotChoice,
